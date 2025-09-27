@@ -1,7 +1,19 @@
-import { useMemo } from 'react';
+import { memo, useMemo, type CSSProperties } from 'react';
 import { motion } from 'framer-motion';
+import ReactFlow, {
+  Background,
+  Controls,
+  MarkerType,
+  MiniMap,
+  Panel,
+  type Edge,
+  type Node,
+  type NodeProps
+} from 'reactflow';
+import 'reactflow/dist/style.css';
 
 import type { LessonContent } from '../../src/lib/types';
+import { cn } from '../../src/lib/utils';
 
 type SingletonPhase =
   | 'introduce-blueprint'
@@ -11,199 +23,333 @@ type SingletonPhase =
   | 'global-accessor'
   | 'thread-guard';
 
-interface SingletonSceneProps {
-  phase: SingletonPhase;
-  prefersReducedMotion?: boolean;
+type NodeStatus = 'dim' | 'focus' | 'pulse';
+type GuardStatus = NodeStatus | 'hidden';
+type EdgeStatus = 'inactive' | 'request' | 'return' | 'guard';
+
+interface SingletonNodeData {
+  label: string;
+  description?: string;
+  status: NodeStatus;
+  accent: string;
+  prefersReducedMotion: boolean;
 }
 
-const phaseConfig: Record<SingletonPhase, {
-  singleton: 'focus' | 'pulse' | 'dim';
-  clients: 'focus' | 'pulse' | 'dim';
-  accessor: 'hidden' | 'focus' | 'pulse';
-  guard: 'hidden' | 'focus';
-  arrows: [number, number, number];
-}> = {
+const basePositions: Record<string, { x: number; y: number }> = {
+  'client-a': { x: 0, y: 0 },
+  'client-b': { x: 0, y: 150 },
+  'client-c': { x: 0, y: 300 },
+  accessor: { x: 280, y: 40 },
+  singleton: { x: 520, y: 180 },
+  guard: { x: 520, y: 340 }
+};
+
+const baseEdges: Edge[] = [
+  { id: 'client-a-to-accessor', source: 'client-a', target: 'accessor', type: 'smoothstep' },
+  { id: 'client-b-to-accessor', source: 'client-b', target: 'accessor', type: 'smoothstep' },
+  { id: 'client-c-to-accessor', source: 'client-c', target: 'accessor', type: 'smoothstep' },
+  { id: 'accessor-to-singleton', source: 'accessor', target: 'singleton', type: 'smoothstep' },
+  { id: 'singleton-to-client-a', source: 'singleton', target: 'client-a', type: 'smoothstep' },
+  { id: 'singleton-to-client-b', source: 'singleton', target: 'client-b', type: 'smoothstep' },
+  { id: 'singleton-to-client-c', source: 'singleton', target: 'client-c', type: 'smoothstep' },
+  { id: 'guard-to-singleton', source: 'guard', target: 'singleton', type: 'smoothstep' }
+];
+
+const phaseConfig: Record<
+  SingletonPhase,
+  {
+    nodeStatus: { singleton: NodeStatus; clients: NodeStatus; accessor: NodeStatus; guard: GuardStatus };
+    edgeStatus: Partial<Record<string, EdgeStatus>>;
+    note: string;
+  }
+> = {
   'introduce-blueprint': {
-    singleton: 'pulse',
-    clients: 'dim',
-    accessor: 'hidden',
-    guard: 'hidden',
-    arrows: [0, 0, 0]
+    nodeStatus: { singleton: 'pulse', clients: 'dim', accessor: 'dim', guard: 'hidden' },
+    edgeStatus: {},
+    note: 'Define the unique instance and make construction private so callers cannot create duplicates.'
   },
   'clients-demand': {
-    singleton: 'dim',
-    clients: 'focus',
-    accessor: 'hidden',
-    guard: 'hidden',
-    arrows: [0.2, 0.2, 0.2]
+    nodeStatus: { singleton: 'dim', clients: 'pulse', accessor: 'focus', guard: 'hidden' },
+    edgeStatus: {
+      'client-a-to-accessor': 'request',
+      'client-b-to-accessor': 'request',
+      'client-c-to-accessor': 'request'
+    },
+    note: 'Multiple services request configuration access through the accessor entry point.'
   },
   'first-request': {
-    singleton: 'focus',
-    clients: 'focus',
-    accessor: 'focus',
-    guard: 'dim',
-    arrows: [1, 0.2, 0.2]
+    nodeStatus: { singleton: 'focus', clients: 'focus', accessor: 'pulse', guard: 'hidden' },
+    edgeStatus: {
+      'client-a-to-accessor': 'request',
+      'client-b-to-accessor': 'request',
+      'client-c-to-accessor': 'request',
+      'accessor-to-singleton': 'request'
+    },
+    note: 'The first accessor call builds the singleton and caches it for future reuse.'
   },
   'reuse-instance': {
-    singleton: 'pulse',
-    clients: 'focus',
-    accessor: 'focus',
-    guard: 'dim',
-    arrows: [1, 1, 1]
+    nodeStatus: { singleton: 'pulse', clients: 'focus', accessor: 'focus', guard: 'hidden' },
+    edgeStatus: {
+      'client-a-to-accessor': 'request',
+      'client-b-to-accessor': 'request',
+      'client-c-to-accessor': 'request',
+      'accessor-to-singleton': 'request',
+      'singleton-to-client-a': 'return',
+      'singleton-to-client-b': 'return',
+      'singleton-to-client-c': 'return'
+    },
+    note: 'Every subsequent caller receives the same instance reference instead of creating new objects.'
   },
   'global-accessor': {
-    singleton: 'focus',
-    clients: 'focus',
-    accessor: 'pulse',
-    guard: 'dim',
-    arrows: [1, 1, 1]
+    nodeStatus: { singleton: 'focus', clients: 'focus', accessor: 'pulse', guard: 'hidden' },
+    edgeStatus: {
+      'client-a-to-accessor': 'request',
+      'client-b-to-accessor': 'request',
+      'client-c-to-accessor': 'request',
+      'accessor-to-singleton': 'request',
+      'singleton-to-client-a': 'return',
+      'singleton-to-client-b': 'return',
+      'singleton-to-client-c': 'return'
+    },
+    note: 'Keep the accessor lightweight and stable so the singleton feels like a global service.'
   },
   'thread-guard': {
-    singleton: 'focus',
-    clients: 'dim',
-    accessor: 'focus',
-    guard: 'focus',
-    arrows: [1, 1, 1]
+    nodeStatus: { singleton: 'focus', clients: 'dim', accessor: 'focus', guard: 'pulse' },
+    edgeStatus: {
+      'client-a-to-accessor': 'request',
+      'client-b-to-accessor': 'request',
+      'client-c-to-accessor': 'request',
+      'accessor-to-singleton': 'request',
+      'singleton-to-client-a': 'return',
+      'singleton-to-client-b': 'return',
+      'singleton-to-client-c': 'return',
+      'guard-to-singleton': 'guard'
+    },
+    note: 'Add a synchronization guard to protect instance creation when threads race to access it.'
   }
 };
 
-function SingletonScene({ phase, prefersReducedMotion }: SingletonSceneProps) {
-  const transition = useMemo(() => ({ duration: prefersReducedMotion ? 0.2 : 0.5 }), [prefersReducedMotion]);
-  const pulseTransition = useMemo(
-    () =>
-      prefersReducedMotion
-        ? { duration: 0.2 }
-        : { duration: 1.6, repeat: Infinity as const, repeatType: 'loop' as const },
-    [prefersReducedMotion]
-  );
+const phaseTitles: Record<SingletonPhase, string> = {
+  'introduce-blueprint': 'Blueprint the Singleton',
+  'clients-demand': 'Clients Request Access',
+  'first-request': 'First Request Creates Instance',
+  'reuse-instance': 'Reuse the Cached Instance',
+  'global-accessor': 'Global Accessor Facade',
+  'thread-guard': 'Thread Safety Guard'
+};
 
-  const highlightStyles = useMemo(
-    () => ({
-      dim: { opacity: 0.35, scale: 1, transition },
-      focus: { opacity: 1, scale: 1, transition },
-      pulse: {
-        opacity: 1,
-        scale: prefersReducedMotion ? 1 : [1, 1.05, 1],
-        transition: pulseTransition
-      }
-    }),
-    [prefersReducedMotion, pulseTransition, transition]
-  );
+const edgeStyles: Record<EdgeStatus, { color: string; width: number; dash?: string; animated: boolean }> = {
+  inactive: { color: 'rgba(148, 163, 184, 0.6)', width: 1.5, dash: '6 4', animated: false },
+  request: { color: '#38bdf8', width: 2.4, animated: true },
+  return: { color: '#a855f7', width: 2.4, dash: '2 2', animated: true },
+  guard: { color: '#bef264', width: 2.4, dash: '4 2', animated: false }
+};
 
-  const config = phaseConfig[phase];
-  const arrowTransition = prefersReducedMotion ? { duration: 0.2 } : { duration: 0.6 };
+function hexToRgba(hex: string, alpha: number) {
+  const normalized = hex.replace('#', '');
+  const bigint = parseInt(normalized, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
-  const arrowColors = ['#38bdf8', '#34d399', '#f472b6'];
-  const clientYPositions = [60, 120, 180];
+const SingletonNode = memo(({ data }: NodeProps<SingletonNodeData>) => {
+  const { label, description, status, accent, prefersReducedMotion } = data;
+
+  const animate = useMemo(() => {
+    if (status === 'pulse' && !prefersReducedMotion) {
+      return { scale: [1, 1.05, 1], opacity: 1 };
+    }
+
+    if (status === 'focus') {
+      return { scale: 1, opacity: 1 };
+    }
+
+    return { scale: 0.96, opacity: 0.65 };
+  }, [prefersReducedMotion, status]);
+
+  const transition = useMemo(() => {
+    if (status === 'pulse' && !prefersReducedMotion) {
+      return { duration: 1.6, repeat: Infinity as const, repeatType: 'loop' as const };
+    }
+
+    return { duration: 0.3 };
+  }, [prefersReducedMotion, status]);
+
+  const style = useMemo(() => {
+    const baseBackground = status === 'dim' ? hexToRgba(accent, 0.08) : hexToRgba(accent, 0.18);
+    const borderColor = status === 'dim' ? hexToRgba(accent, 0.5) : accent;
+    const boxShadow =
+      status === 'focus'
+        ? `0 0 0 2px ${hexToRgba(accent, 0.2)}`
+        : status === 'pulse'
+          ? `0 0 0 4px ${hexToRgba(accent, 0.16)}`
+          : '0 0 0 1px rgba(15, 23, 42, 0.08)';
+
+    return {
+      background: baseBackground,
+      borderColor,
+      boxShadow
+    } satisfies CSSProperties;
+  }, [accent, status]);
+
+  const labelColor = status === 'dim' ? 'var(--muted-foreground)' : accent;
 
   return (
-    <motion.svg
-      viewBox="0 0 360 220"
-      className="h-full w-full"
-      role="presentation"
-      initial={{ opacity: 0, scale: 0.96 }}
-      animate={{ opacity: 1, scale: 1 }}
+    <motion.div
+      initial={{ opacity: 0.9, scale: 0.97 }}
+      animate={animate}
       transition={transition}
+      className={cn(
+        'rounded-xl border px-4 py-3 text-left shadow-sm backdrop-blur-sm transition-all duration-300',
+        status === 'dim' && 'opacity-75'
+      )}
+      style={style}
     >
-      <defs>
-        <pattern id="singletonGrid" width="16" height="16" patternUnits="userSpaceOnUse">
-          <path d="M 16 0 L 0 0 0 16" fill="none" stroke="rgba(148, 163, 184, 0.18)" strokeWidth={1} />
-        </pattern>
-        <linearGradient id="singletonGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#6366f1" stopOpacity="0.95" />
-          <stop offset="100%" stopColor="#a855f7" stopOpacity="0.95" />
-        </linearGradient>
-        <marker id="singletonArrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto" fill="#38bdf8">
-          <polygon points="0 0, 8 4, 0 8" />
-        </marker>
-      </defs>
+      <p className="text-sm font-semibold" style={{ color: labelColor }}>
+        {label}
+      </p>
+      {description ? <p className="mt-1 text-xs text-muted-foreground">{description}</p> : null}
+    </motion.div>
+  );
+});
+SingletonNode.displayName = 'SingletonNode';
 
-      <rect x="0" y="0" width="360" height="220" rx="24" fill="url(#singletonGrid)" opacity={0.7} />
+const nodeTypes = { singletonNode: SingletonNode };
 
-      <motion.g animate={highlightStyles[config.clients]} style={{ transformOrigin: '40px 120px' }}>
-        {clientYPositions.map((y, index) => (
-          <g key={`client-${index}`}>
-            <rect
-              x={24}
-              y={y - 26}
-              width={118}
-              height={44}
-              rx={12}
-              fill="rgba(15, 118, 110, 0.12)"
-              stroke="rgba(13, 148, 136, 0.35)"
-            />
-            <text x={40} y={y} className="fill-current text-sm font-semibold">
-              Client {String.fromCharCode(65 + index)}
-            </text>
-            <text x={40} y={y + 16} className="fill-current text-xs opacity-70">
-              Requests config
-            </text>
-          </g>
-        ))}
-      </motion.g>
+interface SingletonFlowSceneProps {
+  phase: SingletonPhase;
+  prefersReducedMotion?: boolean;
+  zoom?: number;
+}
 
-      <motion.g animate={highlightStyles[config.singleton]} style={{ transformOrigin: '220px 120px' }}>
-        <circle cx={220} cy={120} r={54} fill="url(#singletonGradient)" opacity={0.92} />
-        <text x={220} y={108} textAnchor="middle" className="fill-white text-base font-semibold">
-          Singleton
-        </text>
-        <text x={220} y={128} textAnchor="middle" className="fill-white/80 text-xs">
-          Shared instance
-        </text>
-      </motion.g>
+function SingletonFlowScene({ phase, prefersReducedMotion = false, zoom = 1 }: SingletonFlowSceneProps) {
+  const config = phaseConfig[phase];
 
-      <motion.g animate={highlightStyles[config.accessor]} style={{ transformOrigin: '220px 32px' }}>
-        <rect
-          x={170}
-          y={20}
-          width={100}
-          height={36}
-          rx={10}
-          fill="rgba(59, 130, 246, 0.15)"
-          stroke="rgba(37, 99, 235, 0.6)"
-        />
-        <text x={220} y={42} textAnchor="middle" className="fill-current text-sm font-semibold">
-          getInstance()
-        </text>
-      </motion.g>
+  const nodes = useMemo(() => {
+    const clients: Node<SingletonNodeData>[] = ['client-a', 'client-b', 'client-c'].map((id, index) => ({
+      id,
+      type: 'singletonNode',
+      position: basePositions[id],
+      data: {
+        label: `Client ${String.fromCharCode(65 + index)}`,
+        description: 'Requests configuration',
+        status: config.nodeStatus.clients,
+        accent: '#0f766e',
+        prefersReducedMotion
+      },
+      draggable: false
+    }));
 
-      <motion.g animate={config.guard === 'focus' ? { opacity: 1, scale: prefersReducedMotion ? 1 : [1, 1.1, 1], transition: pulseTransition } : { opacity: 0, transition }}>
-        <circle cx={220} cy={120} r={70} fill="none" stroke="rgba(190, 242, 100, 0.65)" strokeWidth={4} strokeDasharray="6 8" />
-        <text x={220} y={178} textAnchor="middle" className="fill-lime-500 text-xs font-semibold">
-          Thread-safe guard
-        </text>
-      </motion.g>
+    const accessor: Node<SingletonNodeData> = {
+      id: 'accessor',
+      type: 'singletonNode',
+      position: basePositions.accessor,
+      data: {
+        label: 'getInstance()',
+        description: 'Controlled entry point',
+        status: config.nodeStatus.accessor,
+        accent: '#2563eb',
+        prefersReducedMotion
+      },
+      draggable: false
+    };
 
-      {clientYPositions.map((y, index) => (
-        <motion.path
-          key={`arrow-${index}`}
-          d={`M 142 ${y - 4} C 170 ${y - 10}, 190 ${110}, 212 110`}
-          stroke={arrowColors[index]}
-          strokeWidth={3}
-          fill="none"
-          strokeDasharray="6 6"
-          markerEnd="url(#singletonArrow)"
-          animate={{ opacity: config.arrows[index] }}
-          transition={arrowTransition}
-        />
-      ))}
+    const singleton: Node<SingletonNodeData> = {
+      id: 'singleton',
+      type: 'singletonNode',
+      position: basePositions.singleton,
+      data: {
+        label: 'Singleton Instance',
+        description: 'Shared state & behavior',
+        status: config.nodeStatus.singleton,
+        accent: '#4f46e5',
+        prefersReducedMotion
+      },
+      draggable: false
+    };
 
-      <motion.path
-        d="M 220 56 L 220 66"
-        stroke="#2563eb"
-        strokeWidth={3}
-        strokeDasharray="4 4"
-        animate={{ opacity: config.accessor === 'hidden' ? 0.2 : 1 }}
-        transition={transition}
-      />
+    const guard: Node<SingletonNodeData> | null =
+      config.nodeStatus.guard === 'hidden'
+        ? null
+        : {
+            id: 'guard',
+            type: 'singletonNode',
+            position: basePositions.guard,
+            data: {
+              label: 'Thread Guard',
+              description: 'Locks creation',
+              status: config.nodeStatus.guard === 'hidden' ? 'dim' : config.nodeStatus.guard,
+              accent: '#bef264',
+              prefersReducedMotion
+            },
+            draggable: false
+          };
 
-      <text x={40} y={24} className="fill-current text-xs uppercase tracking-wide opacity-60">
-        Multiple consumers
-      </text>
-      <text x={220} y={200} textAnchor="middle" className="fill-current text-xs opacity-70">
-        One orchestrated instance shared everywhere
-      </text>
-    </motion.svg>
+    return guard ? [...clients, accessor, singleton, guard] : [...clients, accessor, singleton];
+  }, [config.nodeStatus.accessor, config.nodeStatus.clients, config.nodeStatus.guard, config.nodeStatus.singleton, prefersReducedMotion]);
+
+  const edges = useMemo(() => {
+    const nodeIds = new Set(nodes.map((node) => node.id));
+
+    return baseEdges
+      .filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
+      .map((edge) => {
+        const status = config.edgeStatus[edge.id] ?? 'inactive';
+        const palette = edgeStyles[status];
+        const strokeDasharray = palette.dash ?? undefined;
+
+        return {
+          ...edge,
+          animated: palette.animated && !prefersReducedMotion,
+          style: {
+            stroke: palette.color,
+            strokeWidth: palette.width,
+            strokeDasharray
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: palette.color,
+            width: 20,
+            height: 20
+          }
+        } satisfies Edge;
+      });
+  }, [config.edgeStatus, nodes, prefersReducedMotion]);
+
+  return (
+    <motion.div
+      className="h-full w-full"
+      initial={{ opacity: 0, scale: 0.97 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: prefersReducedMotion ? 0.2 : 0.45 }}
+    >
+      <ReactFlow
+        fitView
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        minZoom={0.6}
+        maxZoom={1.6}
+        defaultViewport={{ x: 0, y: 0, zoom }}
+        panOnScroll={false}
+        panOnDrag
+        zoomOnScroll={false}
+        zoomOnPinch={false}
+        proOptions={{ hideAttribution: true }}
+        className="bg-transparent"
+        aria-label={`Singleton flow diagram phase: ${phaseTitles[phase]}`}
+      >
+        <Background gap={24} size={1} color="rgba(148, 163, 184, 0.25)" />
+        <MiniMap pannable zoomable className="!bg-background/80" />
+        <Controls showInteractive={false} />
+        <Panel position="top-right" className="max-w-xs rounded-lg border border-border bg-background/85 p-3 text-xs shadow-sm backdrop-blur">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{phaseTitles[phase]}</p>
+          <p className="mt-2 leading-relaxed text-muted-foreground">{config.note}</p>
+        </Panel>
+      </ReactFlow>
+    </motion.div>
   );
 }
 
@@ -224,7 +370,9 @@ const content: LessonContent = {
       description: 'Highlight the unique object responsible for coordinating shared state.',
       durationMs: 4500,
       motion: {},
-      render: ({ prefersReducedMotion }) => <SingletonScene phase="introduce-blueprint" prefersReducedMotion={prefersReducedMotion} />,
+      render: ({ prefersReducedMotion, zoom = 1 }) => (
+        <SingletonFlowScene phase="introduce-blueprint" prefersReducedMotion={prefersReducedMotion} zoom={zoom} />
+      ),
       code: 'class ConfigRegistry {\n  private static instance: ConfigRegistry;\n  private constructor() {}\n  static getInstance() {\n    if (!ConfigRegistry.instance) {\n      ConfigRegistry.instance = new ConfigRegistry();\n    }\n    return ConfigRegistry.instance;\n  }\n}'
     },
     {
@@ -233,7 +381,9 @@ const content: LessonContent = {
       description: 'Multiple consumers ask for configuration, hinting at potential duplication.',
       durationMs: 4800,
       motion: {},
-      render: ({ prefersReducedMotion }) => <SingletonScene phase="clients-demand" prefersReducedMotion={prefersReducedMotion} />,
+      render: ({ prefersReducedMotion, zoom = 1 }) => (
+        <SingletonFlowScene phase="clients-demand" prefersReducedMotion={prefersReducedMotion} zoom={zoom} />
+      ),
       code: '// Services all request configuration access\nconst a = ConfigRegistry.getInstance();\nconst b = ConfigRegistry.getInstance();'
     },
     {
@@ -242,7 +392,9 @@ const content: LessonContent = {
       description: 'The first request builds the instance through the accessor.',
       durationMs: 5200,
       motion: {},
-      render: ({ prefersReducedMotion }) => <SingletonScene phase="first-request" prefersReducedMotion={prefersReducedMotion} />,
+      render: ({ prefersReducedMotion, zoom = 1 }) => (
+        <SingletonFlowScene phase="first-request" prefersReducedMotion={prefersReducedMotion} zoom={zoom} />
+      ),
       code: 'if (!instance) {\n  instance = new ConfigRegistry();\n}'
     },
     {
@@ -251,7 +403,9 @@ const content: LessonContent = {
       description: 'Subsequent calls return the cached singleton instead of constructing anew.',
       durationMs: 5200,
       motion: {},
-      render: ({ prefersReducedMotion }) => <SingletonScene phase="reuse-instance" prefersReducedMotion={prefersReducedMotion} />,
+      render: ({ prefersReducedMotion, zoom = 1 }) => (
+        <SingletonFlowScene phase="reuse-instance" prefersReducedMotion={prefersReducedMotion} zoom={zoom} />
+      ),
       code: 'return ConfigRegistry.instance; // same reference for all callers'
     },
     {
@@ -260,7 +414,9 @@ const content: LessonContent = {
       description: 'The getInstance facade exposes a simple entry point while hiding creation details.',
       durationMs: 5000,
       motion: {},
-      render: ({ prefersReducedMotion }) => <SingletonScene phase="global-accessor" prefersReducedMotion={prefersReducedMotion} />,
+      render: ({ prefersReducedMotion, zoom = 1 }) => (
+        <SingletonFlowScene phase="global-accessor" prefersReducedMotion={prefersReducedMotion} zoom={zoom} />
+      ),
       code: 'export const registry = Object.freeze({ get: (key) => ConfigRegistry.getInstance().get(key) });'
     },
     {
@@ -269,7 +425,9 @@ const content: LessonContent = {
       description: 'Introduce a synchronization boundary to keep the singleton safe in concurrent scenarios.',
       durationMs: 5200,
       motion: {},
-      render: ({ prefersReducedMotion }) => <SingletonScene phase="thread-guard" prefersReducedMotion={prefersReducedMotion} />,
+      render: ({ prefersReducedMotion, zoom = 1 }) => (
+        <SingletonFlowScene phase="thread-guard" prefersReducedMotion={prefersReducedMotion} zoom={zoom} />
+      ),
       code: 'static getInstance() {\n  if (!ConfigRegistry.instance) {\n    synchronized(ConfigRegistry) {\n      if (!ConfigRegistry.instance) {\n        ConfigRegistry.instance = new ConfigRegistry();\n      }\n    }\n  }\n  return ConfigRegistry.instance;\n}'
     }
   ]
