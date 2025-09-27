@@ -3,7 +3,8 @@ import type { LessonContent } from './types';
 const loaders: Record<string, () => Promise<{ default: LessonContent } | LessonContent>> = {
   'dsa/linked-list-intro': () => import('../../content/dsa/linked-list-intro'),
   'system-design/load-balancer-basics': () => import('../../content/system-design/load-balancer-basics'),
-  'oop/solid-single-responsibility': () => import('../../content/oop/solid-single-responsibility')
+  'oop/solid-single-responsibility': () => import('../../content/oop/solid-single-responsibility'),
+  'oop/singleton-pattern-visual': () => import('../../content/oop/singleton-pattern-visual')
 };
 
 export async function loadLesson(trackSlug: string, lessonSlug: string) {

@@ -1,4 +1,5 @@
 import type { MotionProps } from 'framer-motion';
+import type { ReactNode } from 'react';
 
 export interface AnimationStep {
   id: string;
@@ -7,6 +8,15 @@ export interface AnimationStep {
   code?: string;
   motion: MotionProps;
   durationMs: number;
+  render?: ((context: AnimationRenderContext) => ReactNode) | ReactNode;
+}
+
+export interface AnimationRenderContext {
+  step: AnimationStep;
+  index: number;
+  isActive: boolean;
+  zoom: number;
+  prefersReducedMotion: boolean;
 }
 
 export interface LessonContent {

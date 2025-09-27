@@ -49,6 +49,15 @@ export const lessonsByTrack: Record<string, LessonMeta[]> = {
   ],
   oop: [
     {
+      id: 'singleton-pattern-visual',
+      slug: 'singleton-pattern-visual',
+      title: 'Singleton Design Pattern Visualized',
+      trackId: 'oop',
+      durationMs: 210000,
+      level: 'Intermediate',
+      summary: 'Watch how a singleton broker orchestrates shared state across many clients.'
+    },
+    {
       id: 'solid-single-responsibility',
       slug: 'solid-single-responsibility',
       title: 'SOLID: Single Responsibility Principle',
