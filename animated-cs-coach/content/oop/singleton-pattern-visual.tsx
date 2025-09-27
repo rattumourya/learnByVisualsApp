@@ -106,13 +106,19 @@ function SingletonScene({ phase, prefersReducedMotion }: SingletonSceneProps) {
       transition={transition}
     >
       <defs>
+        <pattern id="singletonGrid" width="16" height="16" patternUnits="userSpaceOnUse">
+          <path d="M 16 0 L 0 0 0 16" fill="none" stroke="rgba(148, 163, 184, 0.18)" strokeWidth={1} />
+        </pattern>
         <linearGradient id="singletonGradient" x1="0%" y1="0%" x2="100%" y2="100%">
           <stop offset="0%" stopColor="#6366f1" stopOpacity="0.95" />
           <stop offset="100%" stopColor="#a855f7" stopOpacity="0.95" />
         </linearGradient>
+        <marker id="singletonArrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto" fill="#38bdf8">
+          <polygon points="0 0, 8 4, 0 8" />
+        </marker>
       </defs>
 
-      <rect x="0" y="0" width="360" height="220" rx="24" className="fill-muted" opacity={0.45} />
+      <rect x="0" y="0" width="360" height="220" rx="24" fill="url(#singletonGrid)" opacity={0.7} />
 
       <motion.g animate={highlightStyles[config.clients]} style={{ transformOrigin: '40px 120px' }}>
         {clientYPositions.map((y, index) => (
@@ -176,6 +182,7 @@ function SingletonScene({ phase, prefersReducedMotion }: SingletonSceneProps) {
           strokeWidth={3}
           fill="none"
           strokeDasharray="6 6"
+          markerEnd="url(#singletonArrow)"
           animate={{ opacity: config.arrows[index] }}
           transition={arrowTransition}
         />
